@@ -66,6 +66,7 @@ class ProprioAdapt(object):
         self.mean_eps_length = AverageScalarMeter(window_size=20000)
         self.best_rewards = -10000
         self.agent_steps = 0
+        self.max_agent_steps = self.ppo_config['max_agent_steps']
         # ---- Optim ----
         adapt_params = []
         for name, p in self.model.named_parameters():
@@ -90,7 +91,8 @@ class ProprioAdapt(object):
     def test(self):
         self.set_eval()
         obs_dict = self.env.reset()
-        while True:
+        step = 0
+        while step < self.max_agent_steps:
             input_dict = {
                 'obs': self.running_mean_std(obs_dict['obs']),
                 'proprio_hist': self.sa_mean_std(obs_dict['proprio_hist'].detach()),
@@ -98,6 +100,7 @@ class ProprioAdapt(object):
             mu = self.model.act_inference(input_dict)
             mu = torch.clamp(mu, -1.0, 1.0)
             obs_dict, r, done, info = self.env.step(mu)
+            step += 1
 
     def train(self):
         _t = time.time()
@@ -133,7 +136,10 @@ class ProprioAdapt(object):
             self.step_reward = self.step_reward * not_dones
             self.step_length = self.step_length * not_dones
 
-            self.log_tensorboard()
+            all_fps = self.agent_steps / (time.time() - _t)
+            last_fps = self.batch_size / (time.time() - _last_t)
+            _last_t = time.time()
+            self.log_tensorboard(all_fps, last_fps, loss.item())
 
             if self.agent_steps % 1e8 == 0:
                 self.save(os.path.join(self.nn_dir, f'{self.agent_steps // 1e8}00m'))
@@ -143,21 +149,33 @@ class ProprioAdapt(object):
             if mean_rewards > self.best_rewards:
                 self.save(os.path.join(self.nn_dir, f'best'))
                 self.best_rewards = mean_rewards
-
-            all_fps = self.agent_steps / (time.time() - _t)
-            last_fps = self.batch_size / (time.time() - _last_t)
-            _last_t = time.time()
             info_string = f'Agent Steps: {int(self.agent_steps // 1e6):04}M | FPS: {all_fps:.1f} | ' \
                           f'Last FPS: {last_fps:.1f} | ' \
                           f'Mean Rewards: {mean_rewards:.2f} | ' \
                           f'Current Best: {self.best_rewards:.2f}'
             tprint(info_string)
 
-    def log_tensorboard(self):
+    def log_tensorboard(self, all_fps, last_fps, adapt_loss):
         self.writer.add_scalar('episode_rewards/step', self.mean_eps_reward.get_mean(), self.agent_steps)
         self.writer.add_scalar('episode_lengths/step', self.mean_eps_length.get_mean(), self.agent_steps)
+        self.writer.add_scalar('losses/adapt_loss', adapt_loss, self.agent_steps)
+        self.writer.add_scalar('performance/all_fps', all_fps, self.agent_steps)
+        self.writer.add_scalar('performance/last_fps', last_fps, self.agent_steps)
         for k, v in self.direct_info.items():
             self.writer.add_scalar(f'{k}/frame', v, self.agent_steps)
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({
+                    'episode_rewards': self.mean_eps_reward.get_mean(),
+                    'episode_lengths': self.mean_eps_length.get_mean(),
+                    'losses/adapt_loss': adapt_loss,
+                    'performance/all_fps': all_fps,
+                    'performance/last_fps': last_fps,
+                    **{f'{k}/frame': v for k, v in self.direct_info.items()},
+                }, step=self.agent_steps)
+        except ImportError:
+            pass
 
     def restore_train(self, fn):
         checkpoint = torch.load(fn)

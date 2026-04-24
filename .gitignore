@@ -4,6 +4,8 @@ __pycache__/
 *.STL
 *.npy
 *.egg-info/
+*.log
 logs/
+dist_checkpoints/
 python/
 !pretrained

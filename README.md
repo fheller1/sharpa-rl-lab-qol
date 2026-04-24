@@ -26,11 +26,40 @@ pip install -e .
 # CAUTION⚠️: Same object scale config will overwrite the older one.
 python rl_isaaclab/scripts/gen_grasp.py --task Isaac-Inhand-Rotate-Grasp-Sharpa-Wave-v0 --headless
 ```
-## 2.2. Train the policy
+## 2.2. Train the policy (Stage 1 — PPO with privileged info)
 ```bash
 python rl_isaaclab/scripts/train.py --task Isaac-Inhand-Rotate-Sharpa-Wave-v0 --headless
 ```
-## 2.3. Distillation
+
+**Flags (`train.py`):**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--task` | — | Task ID (required) |
+| `--num_envs` | 16384 | Number of parallel simulation environments |
+| `--seed` | 42 | Random seed |
+| `--cache` | — | Path to grasp cache `.npy` file |
+| `--load_path` | — | Checkpoint `.pth` to load |
+| `--max_agent_steps` | (from config) | Total training iterations |
+| `--algorithm` | (from config) | Algorithm override; use `ProprioAdapt` for Stage 2 |
+| `--resume` | false | Resume training from `--load_path` checkpoint |
+| `--finetune_dataset_dir` | — | Directory for fine-tuning dataset |
+| `--wandb` | false | Enable Weights & Biases logging |
+| `--headless` | false | Run without GUI (AppLauncher flag) |
+| `--device` | (from config) | Compute device, e.g. `cuda:0` (AppLauncher flag) |
+
+**Domain randomization overrides:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--reset_random_quat` | false | Randomize hand orientation on each episode reset |
+| `--scale_range MIN MAX N` | (from config) | Object scale range as three values: min, max, number of steps |
+| `--no_randomize_pd_gains` | false | Disable PD gain randomization |
+| `--no_randomize_friction` | false | Disable friction randomization |
+| `--no_randomize_com` | false | Disable center-of-mass randomization |
+| `--no_randomize_mass` | false | Disable object mass randomization |
+
+## 2.3. Distillation (Stage 2 — ProprioAdapt)
 ```bash
 # last.pth is recommended if curriculum is enabled
 python rl_isaaclab/scripts/train.py --task Isaac-Inhand-Rotate-Sharpa-Wave-v0 --headless --algorithm ProprioAdapt --load_path ${pth}
@@ -41,10 +70,30 @@ python rl_isaaclab/scripts/train.py --task Isaac-Inhand-Rotate-Sharpa-Wave-v0 --
 ```bash
 python rl_isaaclab/scripts/play.py --task Isaac-Inhand-Rotate-Sharpa-Wave-v0 --num_envs 16 --load_path ${pth}
 ```
-## 3.2. Visualize distillated policy
+## 3.2. Visualize distilled policy
 ```bash
 python rl_isaaclab/scripts/play.py --task Isaac-Inhand-Rotate-Sharpa-Wave-v0 --num_envs 16 --algorithm ProprioAdapt --load_path ${pth}
 ```
+
+**Flags (`play.py`):**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--task` | — | Task ID (required) |
+| `--num_envs` | 16 | Number of parallel simulation environments |
+| `--seed` | 42 | Random seed |
+| `--cache` | — | Path to grasp cache `.npy` file |
+| `--load_path` | — | Checkpoint `.pth` to load (required) |
+| `--max_agent_steps` | 2000 | Number of rollout steps |
+| `--algorithm` | (from config) | Algorithm; use `ProprioAdapt` to visualize Stage 2 policy |
+| `--video` | false | Record and save rollout video |
+| `--video_length` | 400 | Steps per recorded video clip |
+| `--camera_eye X Y Z` | 0.5 0.5 0.7 | Viewport camera position |
+| `--camera_target X Y Z` | 0.0 0.0 0.6 | Viewport camera look-at target |
+| `--reset_random_quat` | false | Randomize hand orientation on each episode reset |
+| `--scale_range MIN MAX N` | (from config) | Object scale range as three values: min, max, number of steps |
+| `--headless` | false | Run without GUI (AppLauncher flag) |
+| `--device` | (from config) | Compute device, e.g. `cuda:0` (AppLauncher flag) |
 
 # 4. Deploy
 ## 4.1. Prepare SharpaWave and object
@@ -81,6 +130,19 @@ cp -r ${SharpaWaveSDK}/python rl_isaaclab/utils/python
 # INFOℹ️: Keyboard control is enabled by default. Press 'e' to start, press 'w' to freeze, press 'q' to go home.
 python rl_isaaclab/scripts/deploy.py --task Isaac-Inhand-Rotate-Deploy-Sharpa-Wave-v0 --enable_on_board --hand_side ${0/1} --load_path ${pth}
 ```
+
+**Flags (`deploy.py`):**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--task` | — | Task ID (required) |
+| `--load_path` | — | ProprioAdapt checkpoint `.pth` (required) |
+| `--hand_side` | (from config) | `0` = left hand, `1` = right hand |
+| `--device` | `cuda:0` | Compute device |
+| `--seed` | 42 | Random seed |
+| `--cache` | — | Path to grasp cache `.npy` file |
+| `--enable_on_board` | false | Use on-board tactile (OnBoard mode); omit for HostComputer mode |
+| `--pose_id` | 0 | Initial hand pose index |
 
 # 5. Configure your own task via modifying the config file
 Please refer to rl_isaaclab/tasks/inhand_rotate/sharpa_wave_env_cfg.py and rl_isaaclab/tasks/inhand_rotate/sharpa_wave_deploy_env_cfg.py for details.

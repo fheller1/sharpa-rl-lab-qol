@@ -5,6 +5,7 @@
 
 
 import argparse
+import dataclasses
 import sys
 import shutil
 
@@ -21,6 +22,14 @@ parser.add_argument("--max_agent_steps", type=int, default=None, help="RL Policy
 parser.add_argument("--algorithm", type=str, default=None, help="Run training with multiple GPUs or nodes.")
 parser.add_argument("--resume", action="store_true", default=False, help="Resume training from checkpoint.")
 parser.add_argument("--finetune_dataset_dir", type=str, default=None, help="Dir to finetune dataset.")
+parser.add_argument("--wandb", action="store_true", default=False, help="Enable Weights & Biases logging.")
+# domain randomization overrides
+parser.add_argument("--reset_random_quat", action="store_true", default=False, help="Randomize hand orientation each episode reset.")
+parser.add_argument("--scale_range", type=float, nargs=3, metavar=("MIN", "MAX", "N"), default=None, help="Object scale range [min max n_steps].")
+parser.add_argument("--no_randomize_pd_gains", action="store_true", default=False, help="Disable PD gain randomization.")
+parser.add_argument("--no_randomize_friction", action="store_true", default=False, help="Disable friction randomization.")
+parser.add_argument("--no_randomize_com", action="store_true", default=False, help="Disable center-of-mass randomization.")
+parser.add_argument("--no_randomize_mass", action="store_true", default=False, help="Disable object mass randomization.")
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -56,6 +65,21 @@ torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
 
+def _cfg_to_dict(cfg, prefix=""):
+    result = {}
+    if dataclasses.is_dataclass(cfg) and not isinstance(cfg, type):
+        for f in dataclasses.fields(cfg):
+            key = f"{prefix}{f.name}" if prefix else f.name
+            val = getattr(cfg, f.name)
+            if dataclasses.is_dataclass(val) and not isinstance(val, type):
+                result.update(_cfg_to_dict(val, prefix=f"{key}/"))
+            elif isinstance(val, (int, float, bool, str)):
+                result[key] = val
+            elif isinstance(val, (tuple, list)) and all(isinstance(x, (int, float, bool, str)) for x in val):
+                result[key] = list(val)
+    return result
+
+
 @hydra_task_config(args_cli.task, "agent_cfg_entry_point")
 def main(env_cfg: DirectRLEnvCfg, agent_cfg: dict):
     shutil.rmtree('outputs/')
@@ -72,6 +96,20 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: dict):
     agent_cfg["algorithm"]['minibatch_size'] = min([args_cli.num_envs * 8, 32768])
     if agent_cfg["algo"] == "ProprioAdapt":
         env_cfg.gravity_curriculum = False
+    # domain randomization overrides
+    if args_cli.reset_random_quat:
+        env_cfg.reset_random_quat = True
+    if args_cli.scale_range is not None:
+        env_cfg.scale_range = [args_cli.scale_range[0], args_cli.scale_range[1], int(args_cli.scale_range[2])]
+        env_cfg.events.rand_params(env_cfg.scale_range)
+    if args_cli.no_randomize_pd_gains:
+        env_cfg.randomize_pd_gains = False
+    if args_cli.no_randomize_friction:
+        env_cfg.randomize_friction = False
+    if args_cli.no_randomize_com:
+        env_cfg.randomize_com = False
+    if args_cli.no_randomize_mass:
+        env_cfg.randomize_mass = False
     config = ConfigWrapper(agent_cfg, env_cfg)
 
     # specify directory for logging experiments
@@ -102,6 +140,15 @@ def main(env_cfg: DirectRLEnvCfg, agent_cfg: dict):
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         agent.restore_train(resume_path)
+
+    if args_cli.wandb:
+        import wandb
+        wandb.init(project=agent_cfg["algorithm"]["experiment_name"], dir=log_dir, config={
+            **agent_cfg["algorithm"],
+            "num_envs": args_cli.num_envs,
+            "seed": agent_cfg["seed"],
+            **{f"env/{k}": v for k, v in _cfg_to_dict(env_cfg).items()},
+        })
 
     # run training
     agent.train()

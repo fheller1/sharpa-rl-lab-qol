@@ -120,7 +120,7 @@ class PPO(object):
         self.rl_train_time = 0
         self.all_time = 0
 
-    def write_stats(self, a_losses, c_losses, b_losses, entropies, kls):
+    def write_stats(self, a_losses, c_losses, b_losses, entropies, kls, mean_rewards, mean_lengths):
         self.writer.add_scalar('performance/RLTrainFPS', self.agent_steps / self.rl_train_time, self.agent_steps)
         self.writer.add_scalar('performance/EnvStepFPS', self.agent_steps / self.data_collect_time, self.agent_steps)
 
@@ -135,6 +135,26 @@ class PPO(object):
 
         for k, v in self.extra_info.items():
             self.writer.add_scalar(f'{k}', v, self.agent_steps)
+
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({
+                    'performance/RLTrainFPS': self.agent_steps / self.rl_train_time,
+                    'performance/EnvStepFPS': self.agent_steps / self.data_collect_time,
+                    'losses/actor_loss': torch.mean(torch.stack(a_losses)).item(),
+                    'losses/critic_loss': torch.mean(torch.stack(c_losses)).item(),
+                    'losses/bounds_loss': torch.mean(torch.stack(b_losses)).item(),
+                    'losses/entropy': torch.mean(torch.stack(entropies)).item(),
+                    'info/last_lr': self.last_lr,
+                    'info/e_clip': self.e_clip,
+                    'info/kl': torch.mean(torch.stack(kls)).item(),
+                    'episode_rewards': mean_rewards,
+                    'episode_lengths': mean_lengths,
+                    **self.extra_info,
+                }, step=self.agent_steps)
+        except ImportError:
+            pass
 
     def set_eval(self):
         self.model.eval()
@@ -175,12 +195,11 @@ class PPO(object):
             last_fps = self.batch_size / (time.time() - _last_t)
             _last_t = time.time()
 
-            self.write_stats(a_losses, c_losses, b_losses, entropies, kls)
-
             mean_rewards = self.episode_rewards.get_mean()
             mean_lengths = self.episode_lengths.get_mean()
             self.writer.add_scalar('episode_rewards/step', mean_rewards, self.agent_steps)
             self.writer.add_scalar('episode_lengths/step', mean_lengths, self.agent_steps)
+            self.write_stats(a_losses, c_losses, b_losses, entropies, kls, mean_rewards, mean_lengths)
             checkpoint_name = f'ep_{self.epoch_num}_step_{int(self.agent_steps // 1e6):04}M_reward_{mean_rewards:.2f}'
 
             if self.save_freq > 0:
@@ -229,7 +248,8 @@ class PPO(object):
     def test(self):
         self.set_eval()
         obs_dict = self.env.reset()
-        while True:
+        step = 0
+        while step < self.max_agent_steps:
             input_dict = {
                 'obs': self.running_mean_std(obs_dict['obs']),
                 'priv_info': obs_dict['priv_info'],
@@ -237,6 +257,7 @@ class PPO(object):
             mu = self.model.act_inference(input_dict)
             mu = torch.clamp(mu, -1.0, 1.0)
             obs_dict, r, done, info = self.env.step(mu)
+            step += 1
 
     def train_epoch(self):
         # collect minibatch data

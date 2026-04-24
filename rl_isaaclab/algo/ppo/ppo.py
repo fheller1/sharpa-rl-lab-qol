@@ -216,12 +216,12 @@ class PPO(object):
     def restore_train(self, fn):
         if not fn:
             return
-        checkpoint = torch.load(fn)
+        checkpoint = torch.load(fn, map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
 
     def restore_test(self, fn):
-        checkpoint = torch.load(fn)
+        checkpoint = torch.load(fn, map_location=self.device)
         self.model.load_state_dict(checkpoint['model'])
         if self.normalize_input:
             self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])

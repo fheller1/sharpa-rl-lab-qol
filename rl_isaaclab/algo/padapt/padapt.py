@@ -160,7 +160,7 @@ class ProprioAdapt(object):
             self.writer.add_scalar(f'{k}/frame', v, self.agent_steps)
 
     def restore_train(self, fn):
-        checkpoint = torch.load(fn)
+        checkpoint = torch.load(fn, map_location=self.device)
         cprint('careful, using non-strict matching', 'red', attrs=['bold'])
         self.model.load_state_dict(checkpoint['model'], strict=False)
         self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
@@ -168,7 +168,7 @@ class ProprioAdapt(object):
     def restore_test(self, fn):
         if not fn:
             return
-        checkpoint = torch.load(fn)
+        checkpoint = torch.load(fn, map_location=self.device)
         self.running_mean_std.load_state_dict(checkpoint['running_mean_std'])
         self.model.load_state_dict(checkpoint['model'])
         self.sa_mean_std.load_state_dict(checkpoint['sa_mean_std'])
